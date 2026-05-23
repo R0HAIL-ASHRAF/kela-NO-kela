@@ -3,6 +3,8 @@ import pickle
 import numpy as np
 import matplotlib.pyplot as plt
 
+CLASSES = ['angry', 'sad', 'happy', 'neutral']
+
 def main():
     model_path = 'lstm_model.pkl'
 
@@ -27,13 +29,11 @@ def main():
     X_val_raw = np.load(X_val_path)
     y_val = np.load(y_val_path)
 
-    print(f"Loaded {X_val_raw.shape[0]} completely unseen validation samples for testing.")
+    print(f"Loaded {X_val_raw.shape[0]} unseen validation samples.")
     print(f"X shape: {X_val_raw.shape}")
     print(f"y shape: {y_val.shape}\n")
 
     X_val = (X_val_raw - train_mean) / train_std
-
-    classes = ['angry', 'sad', 'happy', 'neutral', 'fear']
 
     y_true_list = []
     y_pred_list = []
@@ -45,21 +45,16 @@ def main():
         sample = X_val[i]
         actual_class_idx = int(y_val[i])
 
-        if hasattr(model, 'predict'):
-            prob_distribution = model.predict(sample)
-        else:
-            prob_distribution = model.forward(sample)
-
-        prob_distribution = prob_distribution.flatten()
+        prob_distribution = model.predict(sample).flatten()
         predicted_class_idx = np.argmax(prob_distribution)
 
         y_true_list.append(actual_class_idx)
         y_pred_list.append(predicted_class_idx)
 
         if i < 15:
-            print(f"Validation Sample {i+1}")
-            print(f"Predicted: {classes[predicted_class_idx]}")
-            print(f"Actual   : {classes[actual_class_idx]}")
+            print(f"Validation Sample {i + 1}")
+            print(f"Predicted: {CLASSES[predicted_class_idx]}")
+            print(f"Actual   : {CLASSES[actual_class_idx]}")
             print("-" * 50)
 
     print("\nFINAL VALIDATION METRICS REPORT")
@@ -73,7 +68,8 @@ def main():
     total_correct = np.sum(y_true_arr == y_pred_arr)
     final_accuracy = (total_correct / len(y_val)) * 100.0
 
-    for class_idx, class_name in enumerate(classes):
+    num_classes = len(CLASSES)
+    for class_idx, class_name in enumerate(CLASSES):
         tp = np.sum((y_true_arr == class_idx) & (y_pred_arr == class_idx))
         fp = np.sum((y_true_arr != class_idx) & (y_pred_arr == class_idx))
         fn = np.sum((y_true_arr == class_idx) & (y_pred_arr != class_idx))
@@ -89,19 +85,18 @@ def main():
     print("=" * 50)
     print("VALIDATION EVALUATION COMPLETE")
 
-    num_classes = len(classes)
     cm = np.zeros((num_classes, num_classes), dtype=int)
     for true_idx, pred_idx in zip(y_true_list, y_pred_list):
         cm[true_idx][pred_idx] += 1
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(7, 6))
     im = ax.imshow(cm, interpolation='nearest', cmap='Blues')
     plt.colorbar(im, ax=ax)
 
     ax.set_xticks(range(num_classes))
     ax.set_yticks(range(num_classes))
-    ax.set_xticklabels(classes, rotation=45, ha='right')
-    ax.set_yticklabels(classes)
+    ax.set_xticklabels(CLASSES, rotation=45, ha='right')
+    ax.set_yticklabels(CLASSES)
     ax.set_xlabel('Predicted Label')
     ax.set_ylabel('True Label')
     ax.set_title(f'Confusion Matrix  (Accuracy: {final_accuracy:.2f}%)')

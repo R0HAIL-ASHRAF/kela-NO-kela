@@ -4,8 +4,8 @@ import librosa
 import gradio as gr
 
 N_MFCC = 40
-MAX_FRAMES = 173
-CLASSES = ['angry', 'sad', 'happy', 'neutral', 'fear']
+MAX_FRAMES = 100
+CLASSES = ['angry', 'sad', 'happy', 'neutral']
 
 with open("lstm_model.pkl", "rb") as f:
     payload = pickle.load(f)
@@ -17,26 +17,29 @@ train_std = payload['std'].reshape(1, -1)
 def predict_emotion(audio_path):
     y_audio, sr = librosa.load(audio_path, sr=22050)
 
-    mfcc = librosa.feature.mfcc(y=y_audio, sr=sr, n_mfcc=N_MFCC).T
+    mfcc = librosa.feature.mfcc(y=y_audio, sr=sr, n_mfcc=N_MFCC)
+    delta = librosa.feature.delta(mfcc)
+    delta2 = librosa.feature.delta(mfcc, order=2)
+    features = np.concatenate([mfcc, delta, delta2], axis=0).T  # [T, 120]
 
-    if mfcc.shape[0] < MAX_FRAMES:
-        pad_width = MAX_FRAMES - mfcc.shape[0]
-        mfcc = np.pad(mfcc, ((0, pad_width), (0, 0)), mode='constant')
+    if features.shape[0] < MAX_FRAMES:
+        pad_width = MAX_FRAMES - features.shape[0]
+        features = np.pad(features, ((0, pad_width), (0, 0)), mode='constant')
     else:
-        mfcc = mfcc[:MAX_FRAMES, :]
+        features = features[:MAX_FRAMES, :]
 
-    mfcc = (mfcc - train_mean) / train_std
+    features = (features - train_mean) / train_std
 
-    probs = model.predict(mfcc).flatten()
+    probs = model.predict(features).flatten()
 
     return {CLASSES[i]: float(probs[i]) for i in range(len(CLASSES))}
 
 demo = gr.Interface(
     fn=predict_emotion,
     inputs=gr.Audio(type="filepath", label="Upload a speech audio file (.wav)"),
-    outputs=gr.Label(num_top_classes=5, label="Emotion Probabilities"),
+    outputs=gr.Label(num_top_classes=4, label="Emotion Probabilities"),
     title="Speech Emotion Recognition",
-    description="Upload a `.wav` file and the model will predict the speaker's emotion: angry, sad, happy, neutral, or fear.",
+    description="Upload a `.wav` file and the model will predict the speaker's emotion: angry, sad, happy, or neutral.",
     examples=[],
 )
 

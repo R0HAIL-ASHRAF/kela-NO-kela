@@ -6,41 +6,65 @@ class LSTM:
         self.hidden_size = hidden_size
         self.output_size = output_size
         self.dropout_rate = dropout_rate
-        self.dropout_mask = None
 
-        init_scale = np.sqrt(2.0 / (input_size + hidden_size))
+        scale1 = np.sqrt(2.0 / (input_size + hidden_size))
+        scale2 = np.sqrt(2.0 / (hidden_size + hidden_size))
         out_scale = np.sqrt(2.0 / (hidden_size + output_size))
 
-        self.Wf = np.random.randn(hidden_size, input_size + hidden_size) * init_scale
-        self.Wi = np.random.randn(hidden_size, input_size + hidden_size) * init_scale
-        self.Wc = np.random.randn(hidden_size, input_size + hidden_size) * init_scale
-        self.Wo = np.random.randn(hidden_size, input_size + hidden_size) * init_scale
+        # Layer 1 weights  [hidden, input + hidden]
+        self.Wf1 = np.random.randn(hidden_size, input_size + hidden_size) * scale1
+        self.Wi1 = np.random.randn(hidden_size, input_size + hidden_size) * scale1
+        self.Wc1 = np.random.randn(hidden_size, input_size + hidden_size) * scale1
+        self.Wo1 = np.random.randn(hidden_size, input_size + hidden_size) * scale1
+        self.bf1 = np.zeros((hidden_size, 1))
+        self.bi1 = np.zeros((hidden_size, 1))
+        self.bc1 = np.zeros((hidden_size, 1))
+        self.bo1 = np.zeros((hidden_size, 1))
 
+        # Layer 2 weights  [hidden, hidden + hidden]
+        self.Wf2 = np.random.randn(hidden_size, hidden_size + hidden_size) * scale2
+        self.Wi2 = np.random.randn(hidden_size, hidden_size + hidden_size) * scale2
+        self.Wc2 = np.random.randn(hidden_size, hidden_size + hidden_size) * scale2
+        self.Wo2 = np.random.randn(hidden_size, hidden_size + hidden_size) * scale2
+        self.bf2 = np.zeros((hidden_size, 1))
+        self.bi2 = np.zeros((hidden_size, 1))
+        self.bc2 = np.zeros((hidden_size, 1))
+        self.bo2 = np.zeros((hidden_size, 1))
+
+        # Output layer
         self.Wy = np.random.randn(output_size, hidden_size) * out_scale
-
-        self.bf = np.zeros((hidden_size, 1))
-        self.bi = np.zeros((hidden_size, 1))
-        self.bc = np.zeros((hidden_size, 1))
-        self.bo = np.zeros((hidden_size, 1))
         self.by = np.zeros((output_size, 1))
 
-        self.m = {}
-        self.v = {}
-        self.param_names = ['Wf', 'Wi', 'Wc', 'Wo', 'Wy', 'bf', 'bi', 'bc', 'bo', 'by']
-
-        for name in self.param_names:
-            self.m[name] = np.zeros_like(getattr(self, name))
-            self.v[name] = np.zeros_like(getattr(self, name))
-
+        self.param_names = [
+            'Wf1', 'Wi1', 'Wc1', 'Wo1', 'bf1', 'bi1', 'bc1', 'bo1',
+            'Wf2', 'Wi2', 'Wc2', 'Wo2', 'bf2', 'bi2', 'bc2', 'bo2',
+            'Wy', 'by'
+        ]
+        self.m = {n: np.zeros_like(getattr(self, n)) for n in self.param_names}
+        self.v = {n: np.zeros_like(getattr(self, n)) for n in self.param_names}
         self.t = 0
 
-        self.x_cache = {}
-        self.h_cache = {}
-        self.c_cache = {}
-        self.f_cache = {}
-        self.i_cache = {}
-        self.c_tilde_cache = {}
-        self.o_cache = {}
+        self._reset_caches()
+
+    def _reset_caches(self):
+        self.h1_cache = {}
+        self.c1_cache = {}
+        self.f1_cache = {}
+        self.i1_cache = {}
+        self.ct1_cache = {}
+        self.o1_cache = {}
+        self.x1_cache = {}
+
+        self.h2_cache = {}
+        self.c2_cache = {}
+        self.f2_cache = {}
+        self.i2_cache = {}
+        self.ct2_cache = {}
+        self.o2_cache = {}
+
+        self.T = 0
+        self.dropout_mask1 = None
+        self.dropout_mask2 = None
 
     def sigmoid(self, x):
         return 1.0 / (1.0 + np.exp(-np.clip(x, -500, 500)))
@@ -52,92 +76,164 @@ class LSTM:
 
     def forward(self, x_sequence, training=False):
         T = x_sequence.shape[0]
+        self._reset_caches()
+        self.T = T
 
-        self.h_cache[-1] = np.zeros((self.hidden_size, 1))
-        self.c_cache[-1] = np.zeros((self.hidden_size, 1))
+        self.h1_cache[-1] = np.zeros((self.hidden_size, 1))
+        self.c1_cache[-1] = np.zeros((self.hidden_size, 1))
 
         for t in range(T):
             xt = x_sequence[t].reshape(-1, 1)
-            self.x_cache[t] = xt
+            self.x1_cache[t] = xt
+            c1 = np.vstack((xt, self.h1_cache[t - 1]))
 
-            concat = np.vstack((xt, self.h_cache[t-1]))
+            self.f1_cache[t] = self.sigmoid(np.dot(self.Wf1, c1) + self.bf1)
+            self.i1_cache[t] = self.sigmoid(np.dot(self.Wi1, c1) + self.bi1)
+            self.ct1_cache[t] = np.tanh(np.dot(self.Wc1, c1) + self.bc1)
+            self.o1_cache[t] = self.sigmoid(np.dot(self.Wo1, c1) + self.bo1)
 
-            self.f_cache[t] = self.sigmoid(np.dot(self.Wf, concat) + self.bf)
-            self.i_cache[t] = self.sigmoid(np.dot(self.Wi, concat) + self.bi)
-            self.c_tilde_cache[t] = np.tanh(np.dot(self.Wc, concat) + self.bc)
-            self.o_cache[t] = self.sigmoid(np.dot(self.Wo, concat) + self.bo)
+            self.c1_cache[t] = self.f1_cache[t] * self.c1_cache[t - 1] + self.i1_cache[t] * self.ct1_cache[t]
+            self.h1_cache[t] = self.o1_cache[t] * np.tanh(self.c1_cache[t])
 
-            self.c_cache[t] = self.f_cache[t] * self.c_cache[t-1] + self.i_cache[t] * self.c_tilde_cache[t]
-            self.h_cache[t] = self.o_cache[t] * np.tanh(self.c_cache[t])
-
-        h_out = self.h_cache[T-1]
+        # Variational dropout between layers (same mask across all timesteps)
         if training and self.dropout_rate > 0:
-            self.dropout_mask = (np.random.rand(*h_out.shape) > self.dropout_rate) / (1.0 - self.dropout_rate)
-            h_out = h_out * self.dropout_mask
+            self.dropout_mask1 = (np.random.rand(self.hidden_size, 1) > self.dropout_rate) / (1.0 - self.dropout_rate)
         else:
-            self.dropout_mask = np.ones_like(h_out)
+            self.dropout_mask1 = np.ones((self.hidden_size, 1))
 
-        z = np.dot(self.Wy, h_out) + self.by
+        self.h2_cache[-1] = np.zeros((self.hidden_size, 1))
+        self.c2_cache[-1] = np.zeros((self.hidden_size, 1))
+
+        for t in range(T):
+            h1_in = self.h1_cache[t] * self.dropout_mask1
+            c2 = np.vstack((h1_in, self.h2_cache[t - 1]))
+
+            self.f2_cache[t] = self.sigmoid(np.dot(self.Wf2, c2) + self.bf2)
+            self.i2_cache[t] = self.sigmoid(np.dot(self.Wi2, c2) + self.bi2)
+            self.ct2_cache[t] = np.tanh(np.dot(self.Wc2, c2) + self.bc2)
+            self.o2_cache[t] = self.sigmoid(np.dot(self.Wo2, c2) + self.bo2)
+
+            self.c2_cache[t] = self.f2_cache[t] * self.c2_cache[t - 1] + self.i2_cache[t] * self.ct2_cache[t]
+            self.h2_cache[t] = self.o2_cache[t] * np.tanh(self.c2_cache[t])
+
+        h2_out = self.h2_cache[T - 1]
+        if training and self.dropout_rate > 0:
+            self.dropout_mask2 = (np.random.rand(*h2_out.shape) > self.dropout_rate) / (1.0 - self.dropout_rate)
+            h2_out = h2_out * self.dropout_mask2
+        else:
+            self.dropout_mask2 = np.ones_like(h2_out)
+
+        z = np.dot(self.Wy, h2_out) + self.by
         return self.stable_softmax(z)
 
     def backward(self, y_pred, y_true_idx, lr, l2_lambda=0.0001):
-        T = len(self.x_cache)
+        T = self.T
 
-        self.dWf, self.dWi, self.dWc, self.dWo, self.dWy = [np.zeros_like(w) for w in [self.Wf, self.Wi, self.Wc, self.Wo, self.Wy]]
-        self.dbf, self.dbi, self.dbc, self.dbo, self.dby = [np.zeros_like(b) for b in [self.bf, self.bi, self.bc, self.bo, self.by]]
+        dWf1 = np.zeros_like(self.Wf1); dWi1 = np.zeros_like(self.Wi1)
+        dWc1 = np.zeros_like(self.Wc1); dWo1 = np.zeros_like(self.Wo1)
+        dbf1 = np.zeros_like(self.bf1); dbi1 = np.zeros_like(self.bi1)
+        dbc1 = np.zeros_like(self.bc1); dbo1 = np.zeros_like(self.bo1)
+
+        dWf2 = np.zeros_like(self.Wf2); dWi2 = np.zeros_like(self.Wi2)
+        dWc2 = np.zeros_like(self.Wc2); dWo2 = np.zeros_like(self.Wo2)
+        dbf2 = np.zeros_like(self.bf2); dbi2 = np.zeros_like(self.bi2)
+        dbc2 = np.zeros_like(self.bc2); dbo2 = np.zeros_like(self.bo2)
 
         dz = y_pred.copy()
         dz[y_true_idx] -= 1.0
 
-        h_out = self.h_cache[T-1] * self.dropout_mask
-        self.dWy = np.dot(dz, h_out.T)
-        self.dby = dz
+        h2_out = self.h2_cache[T - 1] * self.dropout_mask2
+        dWy = np.dot(dz, h2_out.T)
+        dby = dz.copy()
 
-        dh_next = np.dot(self.Wy.T, dz) * self.dropout_mask
-        dc_next = np.zeros((self.hidden_size, 1))
+        dh2_next = np.dot(self.Wy.T, dz) * self.dropout_mask2
+        dc2_next = np.zeros((self.hidden_size, 1))
+
+        # Collect upstream gradients for layer 1 from all layer-2 timesteps
+        dh1_from_l2 = [np.zeros((self.hidden_size, 1)) for _ in range(T)]
+
+        # Layer 2 BPTT
+        for t in reversed(range(T)):
+            h1_in = self.h1_cache[t] * self.dropout_mask1
+            concat2 = np.vstack((h1_in, self.h2_cache[t - 1]))
+            dh2 = dh2_next
+
+            do2 = dh2 * np.tanh(self.c2_cache[t])
+            do2_r = do2 * self.o2_cache[t] * (1.0 - self.o2_cache[t])
+
+            dc2 = dh2 * self.o2_cache[t] * (1.0 - np.tanh(self.c2_cache[t]) ** 2) + dc2_next
+
+            dc2t = dc2 * self.i2_cache[t]
+            dc2t_r = dc2t * (1.0 - self.ct2_cache[t] ** 2)
+
+            di2 = dc2 * self.ct2_cache[t]
+            di2_r = di2 * self.i2_cache[t] * (1.0 - self.i2_cache[t])
+
+            df2 = dc2 * self.c2_cache[t - 1]
+            df2_r = df2 * self.f2_cache[t] * (1.0 - self.f2_cache[t])
+
+            dWf2 += np.dot(df2_r, concat2.T)
+            dWi2 += np.dot(di2_r, concat2.T)
+            dWc2 += np.dot(dc2t_r, concat2.T)
+            dWo2 += np.dot(do2_r, concat2.T)
+            dbf2 += df2_r; dbi2 += di2_r; dbc2 += dc2t_r; dbo2 += do2_r
+
+            dcat2 = (np.dot(self.Wf2.T, df2_r) + np.dot(self.Wi2.T, di2_r) +
+                     np.dot(self.Wc2.T, dc2t_r) + np.dot(self.Wo2.T, do2_r))
+
+            dh1_from_l2[t] = dcat2[:self.hidden_size, :] * self.dropout_mask1
+            dh2_next = dcat2[self.hidden_size:, :]
+            dc2_next = self.f2_cache[t] * dc2
+
+        # Layer 1 BPTT
+        dh1_next = np.zeros((self.hidden_size, 1))
+        dc1_next = np.zeros((self.hidden_size, 1))
 
         for t in reversed(range(T)):
-            concat = np.vstack((self.x_cache[t], self.h_cache[t-1]))
-            dh = dh_next
+            concat1 = np.vstack((self.x1_cache[t], self.h1_cache[t - 1]))
+            dh1 = dh1_from_l2[t] + dh1_next
 
-            do = dh * np.tanh(self.c_cache[t])
-            do_raw = do * self.o_cache[t] * (1.0 - self.o_cache[t])
+            do1 = dh1 * np.tanh(self.c1_cache[t])
+            do1_r = do1 * self.o1_cache[t] * (1.0 - self.o1_cache[t])
 
-            dc = dh * self.o_cache[t] * (1.0 - np.tanh(self.c_cache[t])**2) + dc_next
+            dc1 = dh1 * self.o1_cache[t] * (1.0 - np.tanh(self.c1_cache[t]) ** 2) + dc1_next
 
-            dc_tilde = dc * self.i_cache[t]
-            dc_tilde_raw = dc_tilde * (1.0 - self.c_tilde_cache[t]**2)
+            dc1t = dc1 * self.i1_cache[t]
+            dc1t_r = dc1t * (1.0 - self.ct1_cache[t] ** 2)
 
-            di = dc * self.c_tilde_cache[t]
-            di_raw = di * self.i_cache[t] * (1.0 - self.i_cache[t])
+            di1 = dc1 * self.ct1_cache[t]
+            di1_r = di1 * self.i1_cache[t] * (1.0 - self.i1_cache[t])
 
-            df = dc * self.c_cache[t-1]
-            df_raw = df * self.f_cache[t] * (1.0 - self.f_cache[t])
+            df1 = dc1 * self.c1_cache[t - 1]
+            df1_r = df1 * self.f1_cache[t] * (1.0 - self.f1_cache[t])
 
-            self.dWf += np.dot(df_raw, concat.T)
-            self.dWi += np.dot(di_raw, concat.T)
-            self.dWc += np.dot(dc_tilde_raw, concat.T)
-            self.dWo += np.dot(do_raw, concat.T)
+            dWf1 += np.dot(df1_r, concat1.T)
+            dWi1 += np.dot(di1_r, concat1.T)
+            dWc1 += np.dot(dc1t_r, concat1.T)
+            dWo1 += np.dot(do1_r, concat1.T)
+            dbf1 += df1_r; dbi1 += di1_r; dbc1 += dc1t_r; dbo1 += do1_r
 
-            self.dbf += df_raw
-            self.dbi += di_raw
-            self.dbc += dc_tilde_raw
-            self.dbo += do_raw
+            dcat1 = (np.dot(self.Wf1.T, df1_r) + np.dot(self.Wi1.T, di1_r) +
+                     np.dot(self.Wc1.T, dc1t_r) + np.dot(self.Wo1.T, do1_r))
 
-            dconcat = (np.dot(self.Wf.T, df_raw) +
-                       np.dot(self.Wi.T, di_raw) +
-                       np.dot(self.Wc.T, dc_tilde_raw) +
-                       np.dot(self.Wo.T, do_raw))
+            dh1_next = dcat1[self.input_size:, :]
+            dc1_next = self.f1_cache[t] * dc1
 
-            dh_next = dconcat[self.input_size:, :]
-            dc_next = self.f_cache[t] * dc
-
+        # Adam update for all parameters
         self.t += 1
         beta1, beta2, eps = 0.9, 0.999, 1e-8
-        grads = [self.dWf, self.dWi, self.dWc, self.dWo, self.dWy, self.dbf, self.dbi, self.dbc, self.dbo, self.dby]
 
-        for name, grad in zip(self.param_names, grads):
-            np.clip(grad, -1.0, 1.0, out=grad)
+        grad_map = {
+            'Wf1': dWf1, 'Wi1': dWi1, 'Wc1': dWc1, 'Wo1': dWo1,
+            'bf1': dbf1, 'bi1': dbi1, 'bc1': dbc1, 'bo1': dbo1,
+            'Wf2': dWf2, 'Wi2': dWi2, 'Wc2': dWc2, 'Wo2': dWo2,
+            'bf2': dbf2, 'bi2': dbi2, 'bc2': dbc2, 'bo2': dbo2,
+            'Wy': dWy, 'by': dby
+        }
+
+        for name in self.param_names:
+            grad = grad_map[name]
+            np.clip(grad, -5.0, 5.0, out=grad)
 
             self.m[name] = beta1 * self.m[name] + (1.0 - beta1) * grad
             self.v[name] = beta2 * self.v[name] + (1.0 - beta2) * (grad ** 2)
@@ -145,27 +241,45 @@ class LSTM:
             m_hat = self.m[name] / (1.0 - beta1 ** self.t)
             v_hat = self.v[name] / (1.0 - beta2 ** self.t)
 
-            current_weight = getattr(self, name)
-            l2_term = l2_lambda * current_weight if name.startswith('W') else 0.0
-            updated_weight = current_weight - lr * (m_hat / (np.sqrt(v_hat) + eps) + l2_term)
-            setattr(self, name, updated_weight)
+            w = getattr(self, name)
+            l2_term = l2_lambda * w if name.startswith('W') else 0.0
+            setattr(self, name, w - lr * (m_hat / (np.sqrt(v_hat) + eps) + l2_term))
 
     def predict(self, x_sequence):
         T = x_sequence.shape[0]
-        h_local = np.zeros((self.hidden_size, 1))
-        c_local = np.zeros((self.hidden_size, 1))
+
+        # Layer 1 forward - collect all h1[t]
+        h1 = np.zeros((self.hidden_size, 1))
+        c1 = np.zeros((self.hidden_size, 1))
+        h1_all = []
 
         for t in range(T):
             xt = x_sequence[t].reshape(-1, 1)
-            concat = np.vstack((xt, h_local))
+            concat1 = np.vstack((xt, h1))
 
-            f = self.sigmoid(np.dot(self.Wf, concat) + self.bf)
-            i = self.sigmoid(np.dot(self.Wi, concat) + self.bi)
-            c_tilde = np.tanh(np.dot(self.Wc, concat) + self.bc)
-            o = self.sigmoid(np.dot(self.Wo, concat) + self.bo)
+            f1 = self.sigmoid(np.dot(self.Wf1, concat1) + self.bf1)
+            i1 = self.sigmoid(np.dot(self.Wi1, concat1) + self.bi1)
+            ct1 = np.tanh(np.dot(self.Wc1, concat1) + self.bc1)
+            o1 = self.sigmoid(np.dot(self.Wo1, concat1) + self.bo1)
 
-            c_local = f * c_local + i * c_tilde
-            h_local = o * np.tanh(c_local)
+            c1 = f1 * c1 + i1 * ct1
+            h1 = o1 * np.tanh(c1)
+            h1_all.append(h1.copy())
 
-        z = np.dot(self.Wy, h_local) + self.by
+        # Layer 2 forward
+        h2 = np.zeros((self.hidden_size, 1))
+        c2 = np.zeros((self.hidden_size, 1))
+
+        for t in range(T):
+            concat2 = np.vstack((h1_all[t], h2))
+
+            f2 = self.sigmoid(np.dot(self.Wf2, concat2) + self.bf2)
+            i2 = self.sigmoid(np.dot(self.Wi2, concat2) + self.bi2)
+            ct2 = np.tanh(np.dot(self.Wc2, concat2) + self.bc2)
+            o2 = self.sigmoid(np.dot(self.Wo2, concat2) + self.bo2)
+
+            c2 = f2 * c2 + i2 * ct2
+            h2 = o2 * np.tanh(c2)
+
+        z = np.dot(self.Wy, h2) + self.by
         return self.stable_softmax(z)

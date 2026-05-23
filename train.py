@@ -33,12 +33,11 @@ def load_dataset():
     std = np.std(X_train_raw, axis=(0, 1), keepdims=True) + 1e-8
 
     X_train = (X_train_raw - mean) / std
-
     X_val = (X_test_raw - mean) / std
     y_val = y_test
 
-    print(f"\nFinal Training Matrix Shape: {X_train.shape} ({X_train.shape[0]} samples)")
-    print(f"Final Validation Matrix Shape: {X_val.shape} ({X_val.shape[0]} samples)")
+    print(f"\nFinal Training Matrix Shape:    {X_train.shape} ({X_train.shape[0]} samples)")
+    print(f"Final Validation Matrix Shape:  {X_val.shape} ({X_val.shape[0]} samples)")
 
     return X_train, y_train, X_val, y_val, mean, std
 
@@ -51,15 +50,11 @@ def compute_loss_and_accuracy(model, X_data, y_data):
         x_sample = X_data[i]
         true_idx = int(y_data[i])
 
-        logits = model.predict(x_sample)
-
-        logits = logits.flatten()
-
+        logits = model.predict(x_sample).flatten()
         exps = np.exp(logits - np.max(logits))
         probs = exps / np.sum(exps)
 
         total_loss -= np.log(probs[true_idx] + 1e-15)
-
         if np.argmax(probs) == true_idx:
             correct_predictions += 1
 
@@ -71,21 +66,21 @@ def main():
     X_train, y_train, X_val, y_val, train_mean, train_std = load_dataset()
 
     print(f"Train samples: {len(X_train)} | Validation samples: {len(X_val)}")
-    print(f"X_train standardized shape: {X_train.shape}\n")
+    print(f"X_train shape: {X_train.shape}\n")
 
-    input_dim = X_train.shape[2]
+    input_dim = X_train.shape[2]   # 120 (MFCC + delta + delta²)
     hidden_dim = 128
-    output_dim = 5
+    output_dim = 4                  # angry, sad, happy, neutral
 
     model = LSTM(input_size=input_dim, hidden_size=hidden_dim, output_size=output_dim, dropout_rate=0.3)
 
-    MAX_EPOCHS = 100
+    MAX_EPOCHS = 150
     LEARNING_RATE = 0.001
     L2_LAMBDA = 0.0001
+    patience = 20
 
     best_val_loss = float('inf')
     best_model_state = None
-    patience = 10
     patience_counter = 0
 
     train_loss_history = []
@@ -93,7 +88,7 @@ def main():
     train_acc_history = []
     val_acc_history = []
 
-    print("--- BEGINNING MODEL TRAINING LOOP (ADAM + CONVERGENCE MONITORING) ---")
+    print("--- BEGINNING MODEL TRAINING LOOP (2-LAYER LSTM, ADAM + CONVERGENCE MONITORING) ---")
 
     for epoch in range(1, MAX_EPOCHS + 1):
         indices = np.arange(len(X_train))
@@ -114,7 +109,7 @@ def main():
         train_acc_history.append(train_acc)
         val_acc_history.append(val_acc)
 
-        print(f"Epoch {epoch:02d}/{MAX_EPOCHS} -> "
+        print(f"Epoch {epoch:03d}/{MAX_EPOCHS} -> "
               f"Train Loss: {train_loss:.4f} [Acc: {train_acc:.2f}%] | "
               f"Val Loss: {val_loss:.4f} [Acc: {val_acc:.2f}%]")
 
@@ -126,12 +121,12 @@ def main():
             patience_counter += 1
             if patience_counter >= patience:
                 print(f"\n[Convergence Reached] Validation loss stopped falling for {patience} epochs.")
-                print(f"Halting execution early at Epoch {epoch} to prevent model overfitting.")
+                print(f"Halting execution early at Epoch {epoch}.")
                 break
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     if best_model_state is not None:
-        print("Restoring and exporting absolute lowest validation loss model configuration...")
+        print("Restoring best validation loss model configuration...")
         model = pickle.loads(best_model_state)
 
     model_export_path = 'lstm_model.pkl'
@@ -143,8 +138,8 @@ def main():
 
     with open(model_export_path, 'wb') as f:
         pickle.dump(payload, f)
-    print(f"Model payload successfully exported inside '{model_export_path}'!")
-    print("="*60)
+    print(f"Model payload successfully exported to '{model_export_path}'!")
+    print("=" * 60)
 
     epochs_range = range(1, len(train_loss_history) + 1)
 
